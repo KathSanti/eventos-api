@@ -1,0 +1,130 @@
+# ---------------------------------------------------------------------------
+# Pipeline de eventos-api: Tests -> Imagen Docker -> Deploy en EC2
+#
+# - En un Pull Request a main: SOLO corre los tests (para revisar antes del merge).
+# - En un push/merge a main:   tests + build/push a Docker Hub + deploy en EC2.
+# - workflow_dispatch:         permite lanzarlo a mano desde la pestaña "Actions".
+#
+# Supone que pom.xml, Dockerfile y docker-compose.prod.yml estan en la RAIZ del repo.
+# ---------------------------------------------------------------------------
+name: Build, Test and Deploy eventos-api
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  # -------------------------------------------------------------------------
+  # 1) TESTS: compila y corre los tests con H2 en memoria (perfil "test").
+  #    Si un test falla, los jobs siguientes NO se ejecutan.
+  # -------------------------------------------------------------------------
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven                     # guarda las dependencias entre ejecuciones
+          cache-dependency-path: pom.xml
+
+      - name: Ejecutar pruebas con H2 en memoria
+        env:
+          SPRING_PROFILES_ACTIVE: test
+        run: mvn -B -ntp -f pom.xml clean test
+
+  # -------------------------------------------------------------------------
+  # 2) DOCKER: construye la imagen y la sube a Docker Hub.
+  #    No corre en Pull Requests (solo cuando el codigo ya llego a main).
+  # -------------------------------------------------------------------------
+  docker:
+    if: github.event_name != 'pull_request'
+    needs: tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Permite construir imagenes para varias arquitecturas (amd64 y arm64)
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Genera los tags: "latest" y uno con el SHA del commit (sirve para volver atras)
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/${{ secrets.DOCKER_IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=sha
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64   # arm64 = EC2 t4g (Graviton)
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  # -------------------------------------------------------------------------
+  # 3) DEPLOY: copia el compose de produccion a la EC2 y levanta los contenedores.
+  # -------------------------------------------------------------------------
+  deploy-ec2:
+    if: github.event_name != 'pull_request'
+    needs: docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Copiar docker-compose.prod.yml a EC2
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: docker-compose.prod.yml
+          target: ~/eventos-api
+
+      - name: Levantar eventos-api + MySQL en EC2
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          # Docker Hub
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+          DOCKER_IMAGE_NAME: ${{ secrets.DOCKER_IMAGE_NAME }}
+          # Base de datos
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_ROOT_PASSWORD: ${{ secrets.DB_ROOT_PASSWORD }}
+          # Administrador inicial de la API
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+          ADMIN_NOMBRE: ${{ secrets.ADMIN_NOMBRE }}
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          # "envs" = cuales de las variables de arriba se envian a la EC2
+          envs: DOCKERHUB_USERNAME,DOCKERHUB_TOKEN,DOCKER_IMAGE_NAME,DB_NAME,DB_USER,DB_PASSWORD,DB_ROOT_PASSWORD,ADMIN_EMAIL,ADMIN_PASSWORD,ADMIN_NOMBRE
+          script: |
+            set -e
+            cd ~/eventos-api
+            # El compose espera IMAGE_NAME; el secret se llama DOCKER_IMAGE_NAME
+            export IMAGE_NAME="$DOCKER_IMAGE_NAME"
+            printf '%s' "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
+            docker compose -f docker-compose.prod.yml pull
+            docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            # Borra imagenes viejas para no llenar el disco de la EC2
+            docker image prune -f
+            docker compose -f docker-compose.prod.yml ps

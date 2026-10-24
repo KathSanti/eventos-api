@@ -1,0 +1,21 @@
+target/
+*.class
+*.log
+.idea/
+*.iml
+.vscode/
+wallet/
+.env
+
+# Llaves SSH de AWS (nunca al repo)
+*.pem
+
+# Terraform (estado y caches locales)
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfvars
+
+# Basura de macOS
+.DS_Store
+__MACOSX/
