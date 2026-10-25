@@ -1,0 +1,34 @@
+# ---------------------------------------------------------------------------
+# docker-compose.db.yml  ->  SOLO para la EC2 de la BASE DE DATOS
+#
+# Este archivo NO lo usa el workflow. Lo copias UNA VEZ a la EC2 de la base
+# y la levantas a mano (ver pasos en el README o en la guia).
+#
+# Las variables se leen de un archivo .env que creas en esa EC2, junto a
+# este archivo, con: DB_NAME, DB_USER, DB_PASSWORD, DB_ROOT_PASSWORD.
+# Deben ser LOS MISMOS valores que pusiste en los Secrets de GitHub.
+#
+# Uso en la EC2 de la base:  docker compose -f docker-compose.db.yml up -d
+# ---------------------------------------------------------------------------
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: eventos-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${DB_NAME:?Falta DB_NAME}
+      MYSQL_USER: ${DB_USER:?Falta DB_USER}            # usuario de la app (NO root)
+      MYSQL_PASSWORD: ${DB_PASSWORD:?Falta DB_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?Falta DB_ROOT_PASSWORD}
+    command: ["--performance-schema=OFF"]   # ahorra ~200 MB de RAM
+    ports:
+      # Aqui SI se publica el 3306, porque la app esta en OTRA maquina.
+      # La proteccion la da el Security Group: 3306 abierto SOLO para el
+      # Security Group de la EC2 de la app, nunca para 0.0.0.0/0.
+      - "3306:3306"
+    volumes:
+      - eventos_mysql_data:/var/lib/mysql
+
+volumes:
+  eventos_mysql_data:

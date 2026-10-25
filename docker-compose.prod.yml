@@ -1,66 +1,32 @@
 # ---------------------------------------------------------------------------
-# docker-compose.prod.yml  ->  SOLO para la EC2 (produccion)
+# docker-compose.prod.yml  ->  SOLO para la EC2 de la APP (produccion)
 #
-# Diferencias con docker-compose.yml (el de tu maquina):
-#   - La app NO se construye aqui (no hay "build: ."): se descarga la imagen
-#     ya publicada en Docker Hub por GitHub Actions.
-#   - Activa el perfil "prod" (application-prod.properties).
-#   - No hay claves por defecto: todas llegan desde los Secrets de GitHub.
-#     La sintaxis ${VAR:?mensaje} hace que compose se DETENGA con ese mensaje
-#     si la variable no existe, en vez de arrancar con una clave vacia.
-#   - Expone la API en el puerto 80 (el que abre el Security Group).
+# La base de datos NO esta aqui: vive en otra EC2 (ver docker-compose.db.yml).
+# La app se conecta a ella usando su IP PRIVADA (secreto DB_HOST).
+#
+# - La imagen se descarga de Docker Hub (la publica GitHub Actions).
+# - Activa el perfil "prod" (application-prod.properties).
+# - ${VAR:?mensaje} -> si falta la variable, compose se detiene con ese mensaje.
 #
 # Uso en la EC2 (lo hace el workflow):  docker compose -f docker-compose.prod.yml up -d
 # ---------------------------------------------------------------------------
 
 services:
-  mysql:
-    image: mysql:8.0
-    container_name: eventos-mysql
-    restart: unless-stopped
-    environment:
-      MYSQL_DATABASE: ${DB_NAME:?Falta DB_NAME}
-      # Usuario propio de la app (NO root). La imagen de MySQL lo crea sola
-      # la primera vez y le da permisos sobre MYSQL_DATABASE.
-      MYSQL_USER: ${DB_USER:?Falta DB_USER}
-      MYSQL_PASSWORD: ${DB_PASSWORD:?Falta DB_PASSWORD}
-      # Clave de root aparte, solo para administrar la base.
-      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?Falta DB_ROOT_PASSWORD}
-    # Desactiva performance_schema: ahorra ~200 MB de RAM (importante en t4g.micro).
-    command: ["--performance-schema=OFF"]
-    healthcheck:
-      # $$ = "no reemplaces esto ahora, usalo dentro del contenedor"
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u root -p$$MYSQL_ROOT_PASSWORD"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
-    volumes:
-      - eventos_mysql_data:/var/lib/mysql
-    # Sin "ports": MySQL solo es visible para la app dentro de la red de Docker,
-    # nunca desde internet.
-
   app:
     image: ${DOCKERHUB_USERNAME:?Falta DOCKERHUB_USERNAME}/${IMAGE_NAME:?Falta IMAGE_NAME}:latest
     container_name: eventos-api
-    restart: unless-stopped
-    depends_on:
-      mysql:
-        condition: service_healthy
+    restart: unless-stopped        # si la base aun no responde y la app se cae, Docker la reintenta
     environment:
       SPRING_PROFILES_ACTIVE: prod
-      DB_HOST: mysql            # nombre del servicio de arriba, no "localhost"
+      DB_HOST: ${DB_HOST:?Falta DB_HOST}   # IP privada de la EC2 de la base (ej. 172.31.x.x)
       DB_PORT: 3306
-      DB_NAME: ${DB_NAME}
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME:?Falta DB_NAME}
+      DB_USER: ${DB_USER:?Falta DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD:?Falta DB_PASSWORD}
       ADMIN_EMAIL: ${ADMIN_EMAIL:?Falta ADMIN_EMAIL}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Falta ADMIN_PASSWORD}
       ADMIN_NOMBRE: ${ADMIN_NOMBRE:?Falta ADMIN_NOMBRE}
-      # Limita la memoria de Java para que quepa junto a MySQL en 1 GB de RAM.
-      JAVA_TOOL_OPTIONS: "-Xmx384m"
+      # Ahora Java tiene la instancia para el solo (1 GB en t4g.micro)
+      JAVA_TOOL_OPTIONS: "-Xmx512m"
     ports:
-      - "80:8080"               # internet:80  ->  contenedor:8080
-
-volumes:
-  eventos_mysql_data:
+      - "80:8080"                  # internet:80  ->  contenedor:8080

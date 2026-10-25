@@ -95,18 +95,18 @@ jobs:
           source: docker-compose.prod.yml
           target: ~/eventos-api
 
-      - name: Levantar eventos-api + MySQL en EC2
+      - name: Levantar eventos-api en EC2 (la base esta en otra EC2)
         uses: appleboy/ssh-action@v1.0.3
         env:
           # Docker Hub
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
           DOCKER_IMAGE_NAME: ${{ secrets.DOCKER_IMAGE_NAME }}
-          # Base de datos
+          # Base de datos (en la otra EC2; DB_HOST = su IP privada)
+          DB_HOST: ${{ secrets.DB_HOST }}
           DB_NAME: ${{ secrets.DB_NAME }}
           DB_USER: ${{ secrets.DB_USER }}
           DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          DB_ROOT_PASSWORD: ${{ secrets.DB_ROOT_PASSWORD }}
           # Administrador inicial de la API
           ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
           ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
@@ -116,7 +116,7 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           # "envs" = cuales de las variables de arriba se envian a la EC2
-          envs: DOCKERHUB_USERNAME,DOCKERHUB_TOKEN,DOCKER_IMAGE_NAME,DB_NAME,DB_USER,DB_PASSWORD,DB_ROOT_PASSWORD,ADMIN_EMAIL,ADMIN_PASSWORD,ADMIN_NOMBRE
+          envs: DOCKERHUB_USERNAME,DOCKERHUB_TOKEN,DOCKER_IMAGE_NAME,DB_HOST,DB_NAME,DB_USER,DB_PASSWORD,ADMIN_EMAIL,ADMIN_PASSWORD,ADMIN_NOMBRE
           script: |
             set -e
             cd ~/eventos-api
