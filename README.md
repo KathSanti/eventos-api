@@ -154,5 +154,3 @@ Verifica en `http://<IP_ELASTICA>/eventos`.
 | `application-prod.properties` | Producción: sin valores por defecto |
 | `application-test.properties` | Tests: H2 en memoria |
 | `.env.example` | Plantilla de variables (`.env` nunca se sube a git) |
-
-Test
